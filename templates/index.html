@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Citation Generator (Video Ad Enabled)</title>
+    
+    <!-- Google AdSense スクリプト -->
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXXXXXXXX"
+            crossorigin="anonymous"></script>
+    
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f9f9f9; }
+        .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        textarea, select, input { width: 100%; padding: 10px; margin-top: 5px; box-sizing: border-box; }
+        button { padding: 10px 20px; margin-top: 10px; cursor: pointer; }
+        .primary { background-color: #007bff; color: white; border: none; border-radius: 4px; }
+        .ad-btn { background-color: #d63384; color: white; border: none; border-radius: 4px; font-weight: bold; }
+        
+        /* チェックボックスのスタイル */
+        .checkbox-container { margin-top: 15px; margin-bottom: 10px; }
+        .checkbox-container label { display: flex; align-items: center; cursor: pointer; }
+        .checkbox-container input[type="checkbox"] { 
+            width: auto; 
+            margin-right: 8px; 
+            cursor: pointer;
+            transform: scale(1.2);
+        }
+        
+        /* 引用リストのスタイル */
+        .citation-item { margin-bottom: 10px; padding: 10px; border-bottom: 1px solid #eee; }
+        /* citeprocが出力する書式のリセット */
+        .csl-entry { margin-bottom: 0.5em; } 
+        .csl-left-margin { display: inline-block; min-width: 2em; } /* 番号付きの場合 */
+        .csl-right-inline { display: inline; }
+
+        /* 動画広告モーダル */
+        #adModal {
+            display: none; 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); z-index: 9999;
+            justify-content: center; align-items: center; flex-direction: column;
+            color: white;
+        }
+        #adVideo { max-width: 90%; max-height: 80vh; border: 2px solid white; }
+        .ad-message { margin-bottom: 15px; font-size: 1.2em; }
+        .skip-counter { font-size: 0.9em; color: #ccc; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>論文引用作成くん (CSL版 + 動画広告)</h2>
+    
+    <label>論文ID (PubMed, ArXiv, bioRxiv DOI)</label>
+    <textarea id="inputIds" rows="5" placeholder="例:
+34567890
+2103.12345"></textarea>
+    
+    <label>スタイル名 (CSLのファイル名)</label>
+    <input type="text" id="styleName" value="nature" placeholder="例: nature, science, cell, apa, ieee">
+    <small>※ <a href="https://github.com/citation-style-language/styles" target="_blank">CSLリポジトリ</a>にあるファイル名（.csl除く）を入力</small>
+    <br>
+
+    <div class="checkbox-container">
+        <label>
+            <input type="checkbox" id="sortAlphabetically">
+            アルファベット順（著者名）でソートする
+        </label>
+    </div>
+
+    <button class="primary" onclick="generateCitations()">リストを作成</button>
+
+    <div id="resultArea" style="display:none; margin-top:20px;">
+        <hr>
+        <h3>出力結果</h3>
+        <div id="citationList" style="background:#fafafa; padding:10px; border:1px solid #ddd;"></div>
+        
+        <button class="ad-btn" onclick="openAdModal()">
+            📺 動画を見てコピー (CM)
+        </button>
+    </div>
+</div>
+
+<div id="adModal">
+    <div class="ad-message">広告を再生中... (終了後にコピーされます)</div>
+    <video id="adVideo" width="600" controls disablePictureInPicture controlsList="nodownload">
+        <source src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4" type="video/mp4">
+        Your browser does not support the video tag.
+    </video>
+    <div class="skip-counter" id="adStatus">最後まで視聴してください</div>
+</div>
+
+<script>
+    async function generateCitations() {
+        const ids = document.getElementById('inputIds').value;
+        const style = document.getElementById('styleName').value;
+        const sortAlphabetically = document.getElementById('sortAlphabetically').checked;
+        const listDiv = document.getElementById('citationList');
+        const resultArea = document.getElementById('resultArea');
+        
+        // 処理中メッセージを表示（結果エリアに）
+        resultArea.style.display = 'block';
+        resultArea.querySelector('h3').textContent = '生成中...';
+        resultArea.querySelector('p').textContent = 'CSLデータを取得・整形中です。しばらくお待ちください。';
+
+        try {
+            const response = await fetch('/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    ids: ids, 
+                    style: style,
+                    sortAlphabetically: sortAlphabetically
+                })
+            });
+            const data = await response.json();
+
+            listDiv.innerHTML = '';
+            data.citations.forEach(html => {
+                const div = document.createElement('div');
+                div.className = 'citation-item';
+                div.innerHTML = html; 
+                listDiv.appendChild(div);
+            });
+
+            // 生成完了メッセージを表示
+            resultArea.querySelector('h3').textContent = '生成完了';
+            resultArea.querySelector('p').textContent = '引用文献リストが生成されました。下のボタンをクリックしてクリップボードにコピーしてください。';
+
+            // 0.5秒後にAdSense広告を表示
+            setTimeout(() => {
+                const adsenseContainer = document.getElementById('adsenseContainer');
+                adsenseContainer.style.display = 'block';
+                
+                // AdSense広告を読み込む
+                try {
+                    (adsbygoogle = window.adsbygoogle || []).push({});
+                } catch (e) {
+                    console.error('AdSense error:', e);
+                }
+            }, 500);
+
+        } catch (error) {
+            resultArea.querySelector('h3').textContent = 'エラー';
+            resultArea.querySelector('p').textContent = 'エラー: ' + error;
+        }
+    }
+
+    // --- 動画広告ロジック ---
+
+    function openAdModal() {
+        const modal = document.getElementById('adModal');
+        const video = document.getElementById('adVideo');
+        const status = document.getElementById('adStatus');
+        
+        modal.style.display = 'flex';
+        video.currentTime = 0;
+        
+        // 動画再生開始
+        video.play().catch(e => {
+            console.log("自動再生がブロックされました。ユーザー操作が必要です。");
+        });
+
+        // 再生終了時のイベント
+        video.onended = function() {
+            modal.style.display = 'none';
+            performCopy(); // コピー実行
+        };
+        
+        // （オプション）強制的に見せるために、シーク禁止などをJSで制御する場合もあります
+    }
+
+    async function performCopy() {
+        const listDiv = document.getElementById('citationList');
+        
+        // HTML形式でコピー（書式を保持）
+        const htmlContent = listDiv.innerHTML;
+        
+        // プレーンテキスト版も用意（フォールバック用）
+        const textContent = listDiv.innerText;
+        
+        // 広告リンク（HTML版とテキスト版）
+        const adLinkHtml = '<br><br>----------<br>Supported by Citation Maker<br><a href="http://example.com">http://example.com</a>';
+        const adLinkText = "\n\n----------\nSupported by Citation Maker\nhttp://example.com";
+        
+        try {
+            // ClipboardItem を使用してHTMLとテキストの両方をコピー
+            const htmlBlob = new Blob([htmlContent + adLinkHtml], { type: 'text/html' });
+            const textBlob = new Blob([textContent + adLinkText], { type: 'text/plain' });
+            
+            const clipboardItem = new ClipboardItem({
+                'text/html': htmlBlob,
+                'text/plain': textBlob
+            });
+            
+            await navigator.clipboard.write([clipboardItem]);
+            alert("広告のご視聴ありがとうございます。\nクリップボードにコピーしました！\n（書式情報を含む）");
+        } catch (err) {
+            // フォールバック: 古いブラウザ向け
+            try {
+                // HTML要素を一時的に作成してコピー
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = htmlContent + adLinkHtml;
+                tempDiv.style.position = 'absolute';
+                tempDiv.style.left = '-9999px';
+                document.body.appendChild(tempDiv);
+                
+                // 選択してコピー
+                const range = document.createRange();
+                range.selectNodeContents(tempDiv);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+                
+                document.execCommand('copy');
+                
+                // クリーンアップ
+                selection.removeAllRanges();
+                document.body.removeChild(tempDiv);
+                
+                alert("広告のご視聴ありがとうございます。\nクリップボードにコピーしました！");
+            } catch (err2) {
+                console.error('Copy failed:', err, err2);
+                alert("コピーに失敗しました。手動でコピーしてください。");
+            }
+        }
+    }
+</script>
+
+</body>
+</html>

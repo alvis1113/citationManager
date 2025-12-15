@@ -1,0 +1,6 @@
+[console_scripts]
+convert = metapub.convert:main
+metapub-registry = metapub.findit.cli:main
+metapub_build_registry = metapub.scripts.build_registry_from_yaml:main
+ncbi_health_check = metapub.ncbi_health_check:main
+pubmed_article = metapub.pubmedfetcher_cli:main
