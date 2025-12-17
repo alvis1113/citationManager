@@ -1,7 +1,9 @@
 import os
 from dotenv import load_dotenv # 環境変数(.env)を読み込むために追加
 from flask import Flask, render_template, request, jsonify
-from markupsafe import escape
+from markupsafe import escape, Markup
+import html
+import re
 
 from waitress import serve
 
@@ -18,17 +20,31 @@ load_dotenv()
 
 app = Flask(__name__)
 
+# セキュリティヘッダーの設定
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self' https:;"
+    return response
+
 # 環境変数からNCBI APIキーを読み込む
 NCBI_API_KEY = os.environ.get("NCBI_API_KEY") 
+
+# ログ設定の改善
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # PubMed取得用のインスタンス
 if NCBI_API_KEY:
     # emailはNCBIの推奨事項です
     fetcher = PubMedFetcher(api_key=NCBI_API_KEY, email="citation-tool-contact@example.com") 
-    print("NCBI API Key loaded successfully.")
+    logger.info("NCBI API Key configured successfully.")
 else:
     fetcher = PubMedFetcher()
-    print("WARNING: NCBI API Key not found. You might hit rate limits.")
+    logger.warning("NCBI API Key not found. Rate limits may apply.")
 
 # CSLファイルを保存するディレクトリ
 CSL_DIR = 'csl_styles'
@@ -49,12 +65,12 @@ def get_csl_path(style_name):
             if response.status_code == 200:
                 with open(file_path, 'wb') as f:
                     f.write(response.content)
-                print(f"Downloaded CSL style: {style_name}")
+                logger.info(f"Downloaded CSL style: {style_name}")
             else:
-                print(f"Style '{style_name}' not found (Status {response.status_code}). Using 'nature'.")
+                logger.warning(f"Style '{style_name}' not found (Status {response.status_code}). Using 'nature'.")
                 return get_csl_path('nature')
         except Exception as e:
-            print(f"Download Error: {e}")
+            logger.error(f"Download Error for style '{style_name}': {str(e)}")
             return None
             
     return file_path
@@ -297,12 +313,19 @@ def fetch_paper_data_csl(source_type, paper_id):
         return data
 
     except Exception as e:
-        print(f"Error fetching {paper_id} ({source_type}): {e}")
+        # APIキーや機密情報を含む可能性があるエラーメッセージをサニタイズ
+        safe_error_msg = str(e)
+        if NCBI_API_KEY and NCBI_API_KEY in safe_error_msg:
+            safe_error_msg = safe_error_msg.replace(NCBI_API_KEY, "[API_KEY_HIDDEN]")
+        
+        logger.error(f"Error fetching paper {paper_id} ({source_type}): {safe_error_msg}")
         return None
 
-# データを保存するデバッグディレクトリ (変更なし)
+# データを保存するデバッグディレクトリ（デバッグモードでのみ作成）
 DEBUG_DIR = 'csl_debug_output'
-if not os.path.exists(DEBUG_DIR):
+DEBUG_ENABLED = os.environ.get('DEBUG_MODE', 'false').lower() == 'true'
+
+if DEBUG_ENABLED and not os.path.exists(DEBUG_DIR):
     os.makedirs(DEBUG_DIR)
 
 def process_csl(csl_json_data, style_name, citation_number=None):
@@ -326,9 +349,10 @@ def process_csl(csl_json_data, style_name, citation_number=None):
     debug_prefix = os.path.join(DEBUG_DIR, f"{item_id}_{style_name}")
 
     try:
-        # --- DEBUG 1: 入力データ ---
-        with open(f"{debug_prefix}_1_input_data.json", 'w', encoding='utf-8') as f:
-            json.dump(csl_json_data, f, indent=4, ensure_ascii=False)
+        # --- DEBUG 1: 入力データ（デバッグモードでのみ） ---
+        if DEBUG_ENABLED:
+            with open(f"{debug_prefix}_1_input_data.json", 'w', encoding='utf-8') as f:
+                json.dump(csl_json_data, f, indent=4, ensure_ascii=False)
         
         # 著者情報の詳細ログ
         #print(f"\n=== Processing {item_id} ===")
@@ -365,11 +389,12 @@ def process_csl(csl_json_data, style_name, citation_number=None):
                 # entryは文字列（整形されたHTML）として返される
                 result_html += str(entry)
         
-        # CSLが生成した生のHTMLをログ出力
-        #print(f"\nCSL raw output for {item_id}:")
-        #print(result_html[:500])  # 最初の500文字を表示
-        with open(f"{debug_prefix}_2_csl_raw_output.html", 'w', encoding='utf-8') as f:
-            f.write(result_html)
+        # CSLが生成した生のHTMLをログ出力（デバッグモードでのみ）
+        if app.debug:
+            logger.debug(f"CSL raw output for {item_id}: {result_html[:200]}...")
+        if DEBUG_ENABLED:
+            with open(f"{debug_prefix}_2_csl_raw_output.html", 'w', encoding='utf-8') as f:
+                f.write(result_html)
         
         # 結果が空の場合のエラー処理
         if not result_html.strip():
@@ -383,8 +408,9 @@ def process_csl(csl_json_data, style_name, citation_number=None):
                 "bib_entries_type": str(type(bib_entries)),
                 "bib_entries_content": str(bib_entries) if bib_entries else "None"
             }
-            with open(f"{debug_prefix}_3_debug_info.json", 'w', encoding='utf-8') as f:
-                json.dump(debug_info, f, indent=4, ensure_ascii=False)
+            if DEBUG_ENABLED:
+                with open(f"{debug_prefix}_3_debug_info.json", 'w', encoding='utf-8') as f:
+                    json.dump(debug_info, f, indent=4, ensure_ascii=False)
             
             return f"CSL Formatting produced no output for {item_id}"
         
@@ -577,17 +603,19 @@ def process_csl(csl_json_data, style_name, citation_number=None):
         # パターン2: ". ." のようなスペースを含むパターンも修正
         result_html = re.sub(r'\.\s+\.', '.', result_html)
 
-        # --- DEBUG 4: 最終整形結果 ---
-        with open(f"{debug_prefix}_4_final_html_output.html", 'w', encoding='utf-8') as f:
-            f.write(result_html)
+        # --- DEBUG 4: 最終整形結果（デバッグモードでのみ） ---
+        if DEBUG_ENABLED:
+            with open(f"{debug_prefix}_4_final_html_output.html", 'w', encoding='utf-8') as f:
+                f.write(result_html)
             
         return result_html
 
     except Exception as e:
         import traceback
         error_info = traceback.format_exc()
-        with open(f"{debug_prefix}_error.log", 'w', encoding='utf-8') as f:
-            f.write(error_info)
+        if DEBUG_ENABLED:
+            with open(f"{debug_prefix}_error.log", 'w', encoding='utf-8') as f:
+                f.write(error_info)
         #print(f"CSL Processing Error: {str(e)}")
         #print(error_info)
         return f"CSL Formatting Error for {item_id}: {str(e)}"
@@ -597,11 +625,52 @@ def process_csl(csl_json_data, style_name, citation_number=None):
 def index():
     return render_template('index.html')
 
+def sanitize_input(text):
+    """
+    ユーザー入力をサニタイズする
+    """
+    if not isinstance(text, str):
+        return ""
+    
+    # HTMLエスケープ
+    text = html.escape(text)
+    
+    # 改行文字以外の制御文字を除去
+    text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
+    
+    # 長すぎる入力を制限
+    if len(text) > 10000:
+        text = text[:10000]
+    
+    return text.strip()
+
+def validate_style_name(style_name):
+    """
+    スタイル名を検証する（パストラバーサル攻撃対策）
+    """
+    if not isinstance(style_name, str):
+        return "nature"
+    
+    # 英数字、ハイフン、アンダースコアのみ許可
+    if not re.match(r'^[a-zA-Z0-9_-]+$', style_name):
+        return "nature"
+    
+    # 長さ制限
+    if len(style_name) > 50:
+        return "nature"
+    
+    return style_name
+
 @app.route('/generate', methods=['POST'])
 def generate():
-    input_text = request.json.get('ids', '')
-    style_name = request.json.get('style', 'nature')
-    sort_alphabetically = request.json.get('sortAlphabetically', False)
+    # 入力値のサニタイズと検証
+    raw_input = request.json.get('ids', '')
+    input_text = sanitize_input(raw_input)
+    
+    raw_style = request.json.get('style', 'nature')
+    style_name = validate_style_name(raw_style)
+    
+    sort_alphabetically = bool(request.json.get('sortAlphabetically', False))
     
     # 一時的に全データを格納するリスト
     citation_data = []
@@ -656,13 +725,14 @@ def generate():
     
     for item in citation_data:
         if item['error']:
-            # エラーの場合
+            # エラーの場合 - HTMLエスケープを適用
+            escaped_id = html.escape(item['original_id'])
             if sort_alphabetically:
                 # アルファベット順の場合は番号なし
-                error_message = f"<span style='color:red'>Not Found or Fetch Error: {item['original_id']}</span>"
+                error_message = f"<span style='color:red'>Not Found or Fetch Error: {escaped_id}</span>"
             else:
                 # 通常の場合は番号付き
-                error_message = f"{citation_number}. <span style='color:red'>Not Found or Fetch Error: {item['original_id']}</span>"
+                error_message = f"{citation_number}. <span style='color:red'>Not Found or Fetch Error: {escaped_id}</span>"
                 citation_number += 1
             results.append(error_message)
         else:

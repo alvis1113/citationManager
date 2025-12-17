@@ -55,10 +55,10 @@
     <label>論文ID (PubMed, ArXiv, bioRxiv DOI)</label>
     <textarea id="inputIds" rows="5" placeholder="例:
 34567890
-2103.12345"></textarea>
+2103.12345" maxlength="10000"></textarea>
     
     <label>スタイル名 (CSLのファイル名)</label>
-    <input type="text" id="styleName" value="nature" placeholder="例: nature, science, cell, apa, ieee">
+    <input type="text" id="styleName" value="nature" placeholder="例: nature, science, cell, apa, ieee" maxlength="50" pattern="[a-zA-Z0-9_-]+">
     <small>※ <a href="https://github.com/citation-style-language/styles" target="_blank">CSLリポジトリ</a>にあるファイル名（.csl除く）を入力</small>
     <br>
 
@@ -92,10 +92,41 @@
 </div>
 
 <script>
+    // 入力値検証関数
+    function validateInput(ids, style) {
+        // IDの検証
+        if (!ids || ids.trim().length === 0) {
+            throw new Error('論文IDを入力してください');
+        }
+        
+        if (ids.length > 10000) {
+            throw new Error('入力が長すぎます（10000文字以内）');
+        }
+        
+        // スタイル名の検証
+        if (!style || !/^[a-zA-Z0-9_-]+$/.test(style)) {
+            throw new Error('スタイル名は英数字、ハイフン、アンダースコアのみ使用可能です');
+        }
+        
+        if (style.length > 50) {
+            throw new Error('スタイル名が長すぎます（50文字以内）');
+        }
+        
+        return true;
+    }
+
     async function generateCitations() {
         const ids = document.getElementById('inputIds').value;
         const style = document.getElementById('styleName').value;
         const sortAlphabetically = document.getElementById('sortAlphabetically').checked;
+        
+        try {
+            // 入力値検証
+            validateInput(ids, style);
+        } catch (error) {
+            alert('入力エラー: ' + error.message);
+            return;
+        }
         const listDiv = document.getElementById('citationList');
         const resultArea = document.getElementById('resultArea');
         
